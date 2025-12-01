@@ -26,28 +26,69 @@ homicides = read_csv("local_files/homicide-data.csv") |>
   )
 ```
 
-## Baltimore Model
+## Baltimore model
 First get the data for Baltimore:
 ```{r}
 baltimore =
   homicides |>
-  filter(city_state == "Baltimore, MD") |>
-  mutate(victim_sex = fct_relevel(victim_sex, "Female"))
-
+  filter(city_state == "Baltimore, MD")
 ```
-Use glm function to fit 
+
+Use glm function to fit a logistic regression model. Treating resolved vs unresolved as the outcome and victim age, sex and race as predictors.
 ```{r}
-baltimore_fit =
-  glm(solved ~ victim_age + victim_sex + victim_race,
+baltimore_fit = glm(solved ~ victim_age + victim_sex + victim_race,
       family = binomial, data = baltimore)
 
-baltimore_or =
-  baltimore_fit |>
-  tidy(conf.int = TRUE, exponentiate = TRUE) |>
-  filter(term == "victim_sexMale")
+baltimore_or = baltimore_fit |>
+  broom::tidy(conf.int = TRUE, exponentiate = TRUE)
 
 baltimore_or
 ```
 
+Now if we look at the estimate and confidence interval of the adjusted odds ratio for solving homicides comparing male to female alone:
+```{r}
+baltimore_or |>
+  filter(term == "victim_sexMale")
+```
 
+We can see that the conf interval of the adjusted OR is (0.324, 0.558) and the estimate OR is 0.426. We can say the odds that a homicide is solved are about 0.574 lower for male victims than female victims in Baltimore.
 
+## All cities model
+Similarly, we use glm function to fit a model for all cities and look at the estimate and confidence interval of OR for solving homicides comparing male to female alone:
+```{r warning=FALSE}
+city_or =
+  homicides |>
+  group_by(city_state) |>
+  nest() |>
+  mutate(
+    fit = purrr::map(data, ~ glm(solved ~ victim_age + victim_sex + victim_race,
+                                 family = binomial, data = .x)),
+    results = purrr::map(fit, ~ broom::tidy(.x, conf.int = TRUE, exponentiate = TRUE))
+  ) |>
+  select(city_state, results) |>
+  unnest(results) |>
+  filter(term == "victim_sexMale")
+
+city_or
+```
+
+## Plotting
+Plot the OR and confidence interval for each city based our previous result:
+```{r dpi=300, fig.width=5, fig.height=8}
+city_or_plot =
+  city_or |>
+  ggplot(aes(x = reorder(city_state, estimate), y = estimate)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0) +
+  coord_flip() +
+  labs(
+    x = "City",
+    y = "Adjusted OR",
+    title = "Adjusted odds of a homicide being solved (male vs female)"
+  )
+
+city_or_plot
+
+```
+
+We can see that Albuquerque, NM has the highest adjusted OR and New York, NY has the lowest adjusted OR, while a higher adjusted OR means bigger chance a homicide is solved for male than female in that city. Note that all cities except the top 5 have a OR < 1, this means a homicide is more likely to be solved for female victims than male victims in most cities.
