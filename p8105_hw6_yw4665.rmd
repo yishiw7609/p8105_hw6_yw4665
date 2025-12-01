@@ -1,0 +1,53 @@
+---
+title: "Homework 6"
+author: "Yishi Wang"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+# Problem 1
+## Data import and clean
+Import data, create the city_state variable, and filter unwanted states:
+```{r}
+homicides = read_csv("local_files/homicide-data.csv") |>
+  mutate(
+    city_state = str_c(city, state, sep = ", "),
+    solved = if_else(disposition == "Closed by arrest", 1, 0),
+    victim_age = na_if(victim_age, "Unknown"),
+    victim_age = as.numeric(victim_age)
+  ) |>
+  filter(
+    !city_state %in% c("Dallas, TX", "Phoenix, AZ", "Kansas City, MO", "Tulsa, AL"),
+    victim_race %in% c("White", "Black"),
+    !is.na(victim_age)
+  )
+```
+
+## Baltimore Model
+First get the data for Baltimore:
+```{r}
+baltimore =
+  homicides |>
+  filter(city_state == "Baltimore, MD") |>
+  mutate(victim_sex = fct_relevel(victim_sex, "Female"))
+
+```
+Use glm function to fit 
+```{r}
+baltimore_fit =
+  glm(solved ~ victim_age + victim_sex + victim_race,
+      family = binomial, data = baltimore)
+
+baltimore_or =
+  baltimore_fit |>
+  tidy(conf.int = TRUE, exponentiate = TRUE) |>
+  filter(term == "victim_sexMale")
+
+baltimore_or
+```
+
+
+
