@@ -7,6 +7,7 @@ output: github_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
+library(p8105.datasets)
 ```
 # Problem 1
 ## Data import and clean
@@ -74,7 +75,7 @@ city_or
 
 ## Plotting
 Plot the OR and confidence interval for each city based our previous result:
-```{r dpi=300, fig.width=5, fig.height=8}
+```{r dpi=300, fig.width=7, fig.height=8}
 city_or_plot =
   city_or |>
   ggplot(aes(x = reorder(city_state, estimate), y = estimate)) +
@@ -92,3 +93,88 @@ city_or_plot
 ```
 
 We can see that Albuquerque, NM has the highest adjusted OR and New York, NY has the lowest adjusted OR, while a higher adjusted OR means bigger chance a homicide is solved for male than female in that city. Note that all cities except the top 5 have a OR < 1, this means a homicide is more likely to be solved for female victims than male victims in most cities.
+
+# Problem 2
+## Data import
+Import Central Park data from p8105.dataset:
+```{r}
+data("weather_df")
+
+weather_cp = 
+  weather_df |>
+  filter(name == "CentralPark_NY")
+```
+
+## Bootstraping
+Create 5000 bootstrap samples and extract r^2 and (beta_tmin / beta_prcp) based on provided formula
+```{r}
+set.seed(1)
+
+boot_results =
+  weather_cp |>
+  modelr::bootstrap(n = 5000) |>
+  mutate(
+    est = map(strap, ~ {
+      dat = as_tibble(.x)
+      fit = lm(tmax ~ tmin + prcp, data = dat)
+      r_sq = broom::glance(fit)$r.squared
+      coefs = broom::tidy(fit)
+      beta_tmin = coefs |> filter(term == "tmin") |> pull(estimate)
+      beta_prcp = coefs |> filter(term == "prcp") |> pull(estimate)
+
+      tibble(
+        r_sq = r_sq,
+        beta_ratio = beta_tmin / beta_prcp
+      )
+    })
+  ) |>
+  unnest(est)
+```
+
+## Plotting Distributions
+We first plot the distributions squared r:
+```{r}
+boot_results |>
+  ggplot(aes(x = r_sq)) +
+  geom_histogram()
+```
+
+Most of our bootstrap samples have a squared r around 0.9, and this implies a strong linear relationship. The model prediction should be stable most of the times. Next, for beta ratios, we perform log scaling to handle the large span of data:
+```{r}
+boot_results |>
+  ggplot(aes(x = beta_ratio)) +
+  geom_histogram() +
+  scale_x_log10()
+
+```
+
+We see that most beta ratios lie between 100 and 10000, and implies that beta_1 (tmin) has a strong impact on tmax while beta_2 (prcp) almost has none. Namely, tmin is the main predictor of tmax.
+
+## Identifying CI
+First get the CI for squared r:
+```{r}
+boot_results |>
+  summarize(
+    r_sq_low  = quantile(r_sq, 0.025),
+    r_sq_high = quantile(r_sq, 0.975),
+  )
+```
+
+The 95% confidence interval for squared r is (0.894, 0.928). Similarly, for beta ratios:
+```{r}
+boot_results |>
+  summarise(
+    ratio_low  = quantile(beta_ratio, 0.025),
+    ratio_high = quantile(beta_ratio, 0.975)
+  )
+```
+
+The 95% confidence interval for squared r is (-5616, 4587)
+
+
+
+
+
+
+
+
