@@ -5,12 +5,19 @@ output: github_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+  )
 library(tidyverse)
 library(p8105.datasets)
+library(modelr)
+library(purrr)
+
 ```
 # Problem 1
-## Data import and clean
+### Data import and clean
 Import data, create the city_state variable, and filter unwanted states:
 ```{r}
 homicides = read_csv("local_files/homicide-data.csv") |>
@@ -27,7 +34,7 @@ homicides = read_csv("local_files/homicide-data.csv") |>
   )
 ```
 
-## Baltimore model
+### Baltimore model
 First get the data for Baltimore:
 ```{r}
 baltimore =
@@ -35,7 +42,7 @@ baltimore =
   filter(city_state == "Baltimore, MD")
 ```
 
-Use glm function to fit a logistic regression model. Treating resolved vs unresolved as the outcome and victim age, sex and race as predictors.
+Use glm function to fit a logistic regression model and then apply tidy to it. Treating resolved vs unresolved as the outcome and victim age, sex and race as predictors.
 ```{r}
 baltimore_fit = glm(solved ~ victim_age + victim_sex + victim_race,
       family = binomial, data = baltimore)
@@ -54,7 +61,7 @@ baltimore_or |>
 
 We can see that the conf interval of the adjusted OR is (0.324, 0.558) and the estimate OR is 0.426. We can say the odds that a homicide is solved are about 0.574 lower for male victims than female victims in Baltimore.
 
-## All cities model
+### All cities model
 Similarly, we use glm function to fit a model for all cities and look at the estimate and confidence interval of OR for solving homicides comparing male to female alone:
 ```{r warning=FALSE}
 city_or =
@@ -62,9 +69,9 @@ city_or =
   group_by(city_state) |>
   nest() |>
   mutate(
-    fit = purrr::map(data, ~ glm(solved ~ victim_age + victim_sex + victim_race,
+    fit = map(data, ~ glm(solved ~ victim_age + victim_sex + victim_race,
                                  family = binomial, data = .x)),
-    results = purrr::map(fit, ~ broom::tidy(.x, conf.int = TRUE, exponentiate = TRUE))
+    results = map(fit, ~ broom::tidy(.x, conf.int = TRUE, exponentiate = TRUE))
   ) |>
   select(city_state, results) |>
   unnest(results) |>
@@ -73,7 +80,7 @@ city_or =
 city_or
 ```
 
-## Plotting
+### Plotting
 Plot the OR and confidence interval for each city based our previous result:
 ```{r dpi=300, fig.width=7, fig.height=8}
 city_or_plot =
@@ -95,7 +102,7 @@ city_or_plot
 We can see that Albuquerque, NM has the highest adjusted OR and New York, NY has the lowest adjusted OR, while a higher adjusted OR means bigger chance a homicide is solved for male than female in that city. Note that all cities except the top 5 have a OR < 1, this means a homicide is more likely to be solved for female victims than male victims in most cities.
 
 # Problem 2
-## Data import
+### Data import
 Import Central Park data from p8105.dataset:
 ```{r}
 data("weather_df")
@@ -105,14 +112,14 @@ weather_cp =
   filter(name == "CentralPark_NY")
 ```
 
-## Bootstraping
+### Bootstraping
 Create 5000 bootstrap samples and extract r^2 and (beta_tmin / beta_prcp) based on provided formula
 ```{r}
 set.seed(1)
 
 boot_results =
   weather_cp |>
-  modelr::bootstrap(n = 5000) |>
+  bootstrap(n = 5000) |>
   mutate(
     est = map(strap, ~ {
       dat = as_tibble(.x)
@@ -131,7 +138,7 @@ boot_results =
   unnest(est)
 ```
 
-## Plotting Distributions
+### Plotting Distributions
 We first plot the distributions squared r:
 ```{r}
 boot_results |>
@@ -150,7 +157,7 @@ boot_results |>
 
 We see that most beta ratios lie between 100 and 10000, and implies that beta_1 (tmin) has a strong impact on tmax while beta_2 (prcp) almost has none. Namely, tmin is the main predictor of tmax.
 
-## Identifying CI
+### Identifying CI
 First get the CI for squared r:
 ```{r}
 boot_results |>
@@ -171,7 +178,81 @@ boot_results |>
 
 The 95% confidence interval for squared r is (-5616, 4587)
 
+# Problem 3
+### Data import and cleaning
+Import data, factor factoralble variables, and omit missing data (pnumlbw and
+pnumgsa only contain 0 values):
+```{r}
+birthweight = read_csv("local_files/birthweight.csv") |>
+  janitor::clean_names() |>
+  mutate(
+    babysex = factor(babysex),
+    malform = factor(malform),
+    frace   = factor(frace),
+    mrace   = factor(mrace)
+  ) |>
+  select(-pnumlbw, -pnumsga)
+```
 
+### Modeling
+All of the following variables should be closely related to birthweight (based on intuitive and a small look-up):
+body size, gestational age, pre-pregnancy BMI, previous birth count, smoking during pregnancy, and weight gain.
+
+Therefore we use these variables to build a simple linear model:
+```{r}
+birthweight_fit = lm(bwt ~ blength + bhead + gaweeks + ppbmi + smoken + wtgain, data = birthweight)
+summary(birthweight_fit)
+```
+
+Now we make model prediction and residuals against the fitted values and plot them:
+```{r}
+birthweight_aug = birthweight |>
+  add_predictions(birthweight_fit) |>
+  add_residuals(birthweight_fit)
+
+birthweight_aug |>
+  ggplot(aes(x = pred, y = resid)) +
+  geom_point(alpha = 0.4) +
+  geom_hline(yintercept = 0) +
+  labs(
+    x = "Fitted values",
+    y = "Residuals",
+    title = "Residual plot for birthweight"
+  )
+```
+
+We can see that the residual is symmetric about 0, and the mean residual is flat across predicted values. Despite a few outliers, our linear model should be stable. 
+
+### Model Comparison
+First build the main effects model and the fully interacted model. Then perform cross-validated prediction with 20 folds:
+```{r}
+set.seed(1)
+
+cv_df = crossv_mc(birthweight, 20)
+cv_results = cv_df |>
+  mutate(
+    fit1 = map(train, ~lm(bwt ~ blength + bhead + gaweeks + ppbmi + smoken + wtgain, data = .x)),
+    fit2 = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    fit3 = map(train, ~lm(bwt ~ bhead * blength * babysex, data = .x))
+  )
+
+```
+
+Compare the prediction errors:
+```{r}
+cv_results = cv_results |>
+  mutate(
+    rmse1 = map2_dbl(fit1, test, ~ rmse(model = .x, data = .y)),
+    rmse2 = map2_dbl(fit2, test, ~ rmse(model = .x, data = .y)),
+    rmse3 = map2_dbl(fit3, test, ~ rmse(model = .x, data = .y))
+  )
+cv_results |>
+  select(rmse1, rmse2, rmse3) |>
+  pivot_longer(everything(), names_to="model", values_to="rmse") |>
+  group_by(model) |>
+  summarize(mean_rmse = mean(rmse))
+```
+Based on 20-fold cross-validation, our proposed model had the lowest average RMSE (284), meaning it has the best performance among the three models.
 
 
 
